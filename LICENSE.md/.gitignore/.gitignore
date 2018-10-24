@@ -1,0 +1,98 @@
+import torch.nn as nn
+import torch.nn.functional as F
+import torch
+import pandas as pd
+import matplotlib.pyplot as plt
+import os
+os.chdir(r'I:\tempera\sea_temp')
+pd.set_option('display.width',None)
+input_size=84
+hidden_size=200
+num_layers=2
+num_epoch=6
+
+def dataloader(start=1,end=100):
+    total_data=[]
+    total_target=[]
+    for c in range(start,end+1):
+        train_data=pd.read_csv(r'features\%d.csv'%c)
+        train_terget=pd.read_csv(r'targets\%d.csv'%c)
+        loader_data = []
+        loader_target = []
+        for i in range(len(train_data)):
+            daily_data=train_data.iloc[i,:]
+            daily_target=train_terget.iloc[i,:]
+            loader_data.append(daily_data)
+            loader_target.append(daily_target)
+        loader_data=torch.Tensor(loader_data).view(-1,1,13,4)
+        loader_target=torch.Tensor(loader_target)
+        total_data.append(loader_data)
+        total_target.append(loader_target)
+    return total_data,total_target
+
+data_,target_=dataloader(1,1500)
+class CNNLSTM(nn.Module):
+    def __init__(self,input_size,hidden_size,num_layers):
+        super(CNNLSTM,self).__init__()
+        self.conv1 = nn.Conv2d(1, 7, 2, 2)
+        self.maxpool=nn.MaxPool2d(2,2)
+        self.lstm=nn.LSTM(input_size=input_size,hidden_size=hidden_size,num_layers=num_layers,batch_first=True)
+        self.fc1=nn.Linear(200,52)
+
+
+    def forward(self,x):
+        x=F.relu(self.conv1(x))
+        x=x.view(1,50,84)
+        x,h=self.lstm(x)
+        x=x.view(-1,200)
+        x=self.fc1(x)
+        x=x.view(50,52)
+        return x
+
+net=CNNLSTM(input_size,hidden_size,num_layers)
+net.cuda()
+criterion=nn.MSELoss()
+optimizer=torch.optim.Adam(net.parameters(),lr=0.005)
+loss_list=[]
+for epoch in range(num_epoch):
+    running_loss = 0
+
+    for i in range(len(data_)):
+        data,target=data_[i],target_[i]
+        data,target=data.cuda(),target.cuda()
+        out = net(data)
+        loss=criterion(out,target)
+        net.zero_grad()
+        loss.backward()
+        optimizer.step()
+        running_loss+=loss.item()
+        if i % 20 == 19:  # print every 2000 mini-batches
+            print('[%d, %5d] loss: %.3f' %
+                  (epoch + 1, i + 1, running_loss / 20))
+            loss_list.append(running_loss/20)
+            running_loss = 0.0
+print(len(loss_list))
+plt.subplot(2,1,1)
+plt.plot(loss_list,c='b')
+plt.title('MSE loss')
+plt.ylabel('Train loss')
+
+with torch.no_grad():
+    t_data,t_target=dataloader(1501,2089)
+    running_loss=0
+    test_losses=[]
+    for i in range(len(t_data)):
+        tt_data,tt_target=t_data[i].cuda(),t_target[i].cuda()
+        out=net(tt_data)
+        test_loss=criterion(out,tt_target)
+        print(i,out,tt_target)
+        print(out-tt_target)
+        running_loss+=test_loss
+        if i%20==19:
+            print('[%5d loss: %.3f'%(i+1,running_loss/20))
+            test_losses.append(running_loss/20)
+            running_loss=0.0
+    plt.subplot(2,1,2)
+    plt.plot(test_losses,c='r')
+    plt.ylabel('Test loss')
+    plt.show()
